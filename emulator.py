@@ -57,8 +57,8 @@ def main():
 
     scanner_positions = {
         "scanner-1": (1.0, 1.0),
-        "scanner-2": (7.5, 5.0),
-        "scanner-3": (13.0, 7.0),
+        "scanner-2": (7.5, 9.5),
+        "scanner-3": (13.0, 3.0),
     }
 
     try:
@@ -102,7 +102,7 @@ def main():
                     f"rssi={rssi:.2f}"
                 )
 
-            time.sleep(1)
+            time.sleep(0.5)
 
     except KeyboardInterrupt:
         print()
