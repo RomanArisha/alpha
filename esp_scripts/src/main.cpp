@@ -40,6 +40,7 @@ constexpr int    STALE_SECONDS = 60; //через 60 секунд отсутсв
 constexpr int    TOTAL_WINDOW_MS = 5000; //период обноваления информации и вывода на экран (мс)
 constexpr int    POLL_STEP_MS    = 100; //время для считывания инструкций с клавиатуры
 constexpr const char* DEFAULT_LOG_NAME = "ble_log.csv";
+constexpr int SCANNER_ID = 0; //id-сканера
 
 constexpr std::array<std::string_view, 1> TARGETS = { //список имён целей
     //при работе с esp и метками лучше использовать mac-адреса
@@ -108,7 +109,7 @@ void startLogging() {
     }
 
     g_logPath = name;
-    g_logFile << "window,mode,timestamp_unix_ms,mac,name,rssi,avg,distance_m\n";
+    g_logFile << "scanner_id,timestamp_unix_ms,mac,name,rssi\n";
     std::cout << "Logging to " << name << " (press 'e' to stop)\n";
 }
 
@@ -262,11 +263,9 @@ int main() {
         if (g_logFile.is_open()) {
             auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
-            g_logFile << windowNo << ',' << modeStr << ',' << ms << ','
+            g_logFile << SCANNER_ID << ',' << ms << ','
                     << mac << ',' << displayName << ','
-                    << info.rssiHistory.back() << ','
-                    << std::fixed << std::setprecision(1) << avg << ','
-                    << std::setprecision(2) << dist << '\n';
+                    << info.rssiHistory.back() << '\n';
         }
     }
     std::cout << "\n";
