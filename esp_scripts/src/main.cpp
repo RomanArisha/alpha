@@ -17,6 +17,8 @@
 #include <thread>
 #include <cctype>
 #include <utility>
+#include <fstream>
+#include <filesystem>
 
 struct DeviceInfo {
     std::string name;
@@ -37,6 +39,7 @@ constexpr size_t HISTORY_SIZE = 1; //количество последних н�
 constexpr int    STALE_SECONDS = 60; //через 60 секунд отсутсвия объект признаётся неактивным и удаляется из хранилища
 constexpr int    TOTAL_WINDOW_MS = 5000; //период обноваления информации и вывода на экран (мс)
 constexpr int    POLL_STEP_MS    = 100; //время для считывания инструкций с клавиатуры
+constexpr const char* DEFAULT_LOG_NAME = "ble_log.csv";
 
 constexpr std::array<std::string_view, 1> TARGETS = { //список имён целей
     //при работе с esp и метками лучше использовать mac-адреса
@@ -64,8 +67,11 @@ std::mutex g_queueMutex; //позволяет безопасно работат�
 std::vector<RawPacket> g_rawPackets;
 std::map<std::string, DeviceInfo> devices;
 std::set<std::string> seenThisWindow;
+std::string g_logPath;   // путь, куда пишем
 
 std::atomic<bool> g_running{true};//переменная для отслеживания завершения программы
+std::ofstream g_logFile;          // поток файла; открыт = идёт запись
+std::atomic<bool> g_logging{false};
 
 enum class Mode { 
     Work, Detect, Pause //три возможных режима работы
@@ -77,8 +83,33 @@ void handleKey(int key) { //обработка ввода команд
         case 'p': g_mode = Mode::Pause;  break;
         case 'd': g_mode = Mode::Detect; break;
         case 'w': g_mode = Mode::Work;   break;
+        case 'b': g_logging = true;      break;   // запрос на старт
+        case 'e': g_logging = false;     break;   // запрос на стоп
         case 'q': g_running = false;     break;
     }
+}
+
+void startLogging() {
+    std::cout << "Enter log file name [" << DEFAULT_LOG_NAME << "]: ";
+    std::cout.flush();
+
+    std::string name;
+    std::getline(std::cin, name);
+    if (name.empty()) name = DEFAULT_LOG_NAME;
+
+    // Если имя без расширения — добавим .csv
+    if (name.find('.') == std::string::npos) name += ".csv";
+
+    g_logFile.open(name, std::ios::out | std::ios::trunc);
+    if (!g_logFile.is_open()) {
+        std::cerr << "Cannot open file: " << name << "\n";
+        g_logging = false;
+        return;
+    }
+
+    g_logPath = name;
+    g_logFile << "window,mode,timestamp_unix_ms,mac,name,rssi,avg,distance_m\n";
+    std::cout << "Logging to " << name << " (press 'e' to stop)\n";
 }
 
 double calculateDistance(double rssi) { //функция расчёта расстояния по значению rssi и указанным параметрам
@@ -167,6 +198,14 @@ int main() {
         }
         adapter.scan_stop();
 
+        if (g_logging && !g_logFile.is_open()) {
+            startLogging();   // спросит имя, откроет файл, напишет заголовок
+        } else if (!g_logging && g_logFile.is_open()) {
+            g_logFile.flush();
+            g_logFile.close();
+            std::cout << "Log saved: " << g_logPath << "\n";
+        }
+
         if (!g_running) break;
         if (g_mode.load() == Mode::Pause) { //в случае паузы очищаем и переходим в режим ожидания
             std::lock_guard<std::mutex> lock(g_queueMutex);
@@ -203,26 +242,41 @@ int main() {
         }
 
         for (const std::string& mac : seenThisWindow) {
-            auto it = devices.find(mac);
-            if (it == devices.end()) continue;
-            auto& info = it->second;
-            if (info.rssiHistory.empty()) continue;
+    auto it = devices.find(mac);
+    if (it == devices.end()) continue;
+    auto& info = it->second;
+    if (info.rssiHistory.empty()) continue;
 
-            double sum = 0;
-            for (int v : info.rssiHistory) sum += v;
-            double avg = sum / info.rssiHistory.size();
-            double dist = calculateDistance(avg);
-            std::string displayName = info.name.empty() ? "<unnamed>" : info.name;
+    double sum = 0;
+    for (int v : info.rssiHistory) sum += v;
+        double avg = sum / info.rssiHistory.size();
+        double dist = calculateDistance(avg);
+        std::string displayName = info.name.empty() ? "<unnamed>" : info.name;
 
-            std::cout << "  " << std::left << std::setw(24) << displayName
-                    << " [" << mac << "]"
-                    << " RSSI: " << std::setw(5) << info.rssiHistory.back()
-                    << " | avg: " << std::fixed << std::setprecision(1) << std::setw(6) << avg
-                    << " | ~" << std::setprecision(2) << dist << " m\n";
+        std::cout << "  " << std::left << std::setw(24) << displayName
+                << " [" << mac << "]"
+                << " RSSI: " << std::setw(5) << info.rssiHistory.back()
+                << " | avg: " << std::fixed << std::setprecision(1) << std::setw(6) << avg
+                << " | ~" << std::setprecision(2) << dist << " m\n";
+
+        if (g_logFile.is_open()) {
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count();
+            g_logFile << windowNo << ',' << modeStr << ',' << ms << ','
+                    << mac << ',' << displayName << ','
+                    << info.rssiHistory.back() << ','
+                    << std::fixed << std::setprecision(1) << avg << ','
+                    << std::setprecision(2) << dist << '\n';
         }
-        std::cout << "\n";
+    }
+    std::cout << "\n";
     }
 
+    if (g_logFile.is_open()) {
+        g_logFile.flush();
+        g_logFile.close();
+        std::cout << "Log saved: " << g_logPath << "\n";
+    }
     std::cout << "Stopped.\n";
     return 0;
 }
